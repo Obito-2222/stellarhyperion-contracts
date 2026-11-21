@@ -833,7 +833,7 @@ contract HyperionRouter is IHyperionRouter, AccessControl, Pausable, ReentrancyG
         onlyRole(DEFAULT_ADMIN_ROLE)
         returns (uint64 id)
     {
-        _validateAction(action);
+        _validateAction(action, false);
         id = ++_actionCount;
         uint64 eta = uint64(block.timestamp) + timelockDelay;
         uint64 expiresAt = eta + GRACE_PERIOD;
@@ -862,7 +862,7 @@ contract HyperionRouter is IHyperionRouter, AccessControl, Pausable, ReentrancyG
         // Re-checked on the way out as well as the way in. The bounds a change was measured
         // against can move while it waits, and an action queued under one ceiling should not land
         // under another.
-        _validateAction(action);
+        _validateAction(action, true);
         _applyAction(action);
         emit ActionExecuted(id, action.kind);
         emit ActionAuditUpdated(1, id, ActionAuditStatus.Executed, msg.sender, CancelReason.Unspecified, "");
@@ -1023,7 +1023,13 @@ contract HyperionRouter is IHyperionRouter, AccessControl, Pausable, ReentrancyG
     /// way to a reviewer and another way to the code, so the unused fields are checked rather
     /// than ignored. `RouteKind` has no unset value, so `Cctp` doubles as one where a kind has
     /// nothing to do with a rail.
-    function _validateAction(AdminAction memory action) private view {
+    ///
+    /// `executing` marks the second of the two moments this runs. A deployment queues a batch of
+    /// actions before any of them lands, so an action whose subject is registered by an earlier
+    /// action in that same batch cannot be measured against storage yet. Only execution knows the
+    /// token is registered. Everything knowable at queue time is still checked at queue time;
+    /// only the checks that need the earlier action's effect are deferred.
+    function _validateAction(AdminAction memory action, bool executing) private view {
         ActionKind kind = action.kind;
 
         bool usesRoute = kind == ActionKind.SetAdapter || kind == ActionKind.SetRailReceiver
@@ -1072,7 +1078,7 @@ contract HyperionRouter is IHyperionRouter, AccessControl, Pausable, ReentrancyG
             if (action.amount <= cfg.flowLimit) revert LimitNotRaised();
         }
         if (kind == ActionKind.SetTokenBreakerThreshold || kind == ActionKind.ResetTokenBreaker) {
-            _validateBreakerAction(kind, action);
+            _validateBreakerAction(kind, action, executing);
         }
         if (kind == ActionKind.SetTimelockDelay) {
             if (action.amount < MIN_TIMELOCK_DELAY || action.amount > MAX_TIMELOCK_DELAY) {
@@ -1088,15 +1094,23 @@ contract HyperionRouter is IHyperionRouter, AccessControl, Pausable, ReentrancyG
     /// exactly the same things. `SetTokenBreakerThreshold` can never exceed the ordinary flow
     /// limit, and `ResetTokenBreaker` cannot restore departures against a ceiling the guardian
     /// has since tightened.
-    function _validateBreakerAction(ActionKind kind, AdminAction memory action) private view {
+    function _validateBreakerAction(ActionKind kind, AdminAction memory action, bool executing) private view {
         TokenConfig memory cfg = _tokens[action.subject];
-        if (!cfg.registered) revert TokenNotRegistered();
         if (kind == ActionKind.SetTokenBreakerThreshold) {
             // Never zero: a zero ceiling and an unconfigured breaker would otherwise be
             // indistinguishable in storage.
-            if (action.amount == 0 || action.amount > cfg.flowLimit) revert InvalidLimit();
+            if (action.amount == 0) revert InvalidLimit();
+            if (!cfg.registered) {
+                // The registration may be queued earlier in the same batch, which is how a fresh
+                // deployment arms a breaker before any route opens. Execution is where storage
+                // can say whether that registration actually landed.
+                if (!executing) return;
+                revert TokenNotRegistered();
+            }
+            if (action.amount > cfg.flowLimit) revert InvalidLimit();
             return;
         }
+        if (!cfg.registered) revert TokenNotRegistered();
         TokenBreaker memory breaker = _breakers[action.subject];
         if (!breaker.configured) revert CircuitBreakerNotConfigured();
         if (!breaker.tripped) revert InvalidLimit();

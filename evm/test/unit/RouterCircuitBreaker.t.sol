@@ -89,14 +89,47 @@ contract RouterCircuitBreakerTest is Fixture {
         router.queueAction(action);
     }
 
-    function test_a_threshold_needs_a_registered_token() public {
+    function test_a_threshold_for_a_token_that_never_gets_registered_cannot_execute() public {
+        // Queue time cannot tell a token registered earlier in the same batch from one that does
+        // not exist, so the refusal belongs at execution, where storage has the answer.
         AdminAction memory action = _empty(ActionKind.SetTokenBreakerThreshold);
         action.subject = address(0xdead);
         action.amount = 1;
 
         vm.prank(admin);
+        uint64 id = router.queueAction(action);
+
+        vm.warp(block.timestamp + TIMELOCK + 1);
+        vm.prank(admin);
         vm.expectRevert(TokenNotRegistered.selector);
-        router.queueAction(action);
+        router.executeAction(id);
+    }
+
+    function test_a_registration_and_its_threshold_land_as_one_batch() public {
+        // What a deployment does: queue both before either lands, so no departure can ever see
+        // the token registered with routes open and no reviewed ceiling.
+        MockERC20 fresh = new MockERC20("Fresh", "FRESH", USDC_DECIMALS);
+
+        AdminAction memory register = _empty(ActionKind.RegisterToken);
+        register.subject = address(fresh);
+        register.amount = FLOW_LIMIT;
+        register.decimals = USDC_DECIMALS;
+
+        AdminAction memory threshold = _empty(ActionKind.SetTokenBreakerThreshold);
+        threshold.subject = address(fresh);
+        threshold.amount = EMERGENCY;
+
+        vm.startPrank(admin);
+        uint64 registerId = router.queueAction(register);
+        uint64 thresholdId = router.queueAction(threshold);
+        vm.warp(block.timestamp + TIMELOCK + 1);
+        router.executeAction(registerId);
+        router.executeAction(thresholdId);
+        vm.stopPrank();
+
+        TokenBreaker memory breaker = router.circuitBreaker(address(fresh));
+        assertTrue(breaker.configured);
+        assertEq(breaker.threshold, EMERGENCY);
     }
 
     function test_a_guardian_can_tighten_the_ceiling_but_not_widen_it() public {
