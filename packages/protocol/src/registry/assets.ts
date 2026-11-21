@@ -13,6 +13,8 @@
  */
 import type { ChainKey } from "../chains.js";
 import type { Hex } from "../bytes.js";
+import { assertWithinLimit, resolveCodecLimits } from "../limits.js";
+import type { CodecLimitOverrides, CodecLimits } from "../limits.js";
 import { RouteKind } from "../routes.js";
 
 /** What every asset entry says about itself, whichever chain it lives on. */
@@ -178,11 +180,32 @@ export const ASSETS: readonly Asset[] = [
   },
 ];
 
-export function assetsOn(chainKey: ChainKey): readonly Asset[] {
+/// @dev The registry is a build time constant, but the lookup helpers are public and are given
+/// caller controlled strings. Measuring first keeps an absurd symbol from being scanned for
+/// across every entry, and keeps a future generated registry from growing without a bound.
+function withinRegistryBudget(overrides: CodecLimitOverrides): CodecLimits {
+  const budgets = resolveCodecLimits(overrides);
+  assertWithinLimit(
+    "maxAssetRegistryEntries",
+    ASSETS.length,
+    budgets.maxAssetRegistryEntries,
+    "ASSETS",
+  );
+  return budgets;
+}
+
+export function assetsOn(chainKey: ChainKey, limits: CodecLimitOverrides = {}): readonly Asset[] {
+  withinRegistryBudget(limits);
   return ASSETS.filter((asset) => asset.chain === chainKey);
 }
 
-export function assetOn(chainKey: ChainKey, symbol: string): Asset | null {
+export function assetOn(
+  chainKey: ChainKey,
+  symbol: string,
+  limits: CodecLimitOverrides = {},
+): Asset | null {
+  const budgets = withinRegistryBudget(limits);
+  if (typeof symbol !== "string" || symbol.length > budgets.maxAssetSymbolChars) return null;
   return ASSETS.find((asset) => asset.chain === chainKey && asset.symbol === symbol) ?? null;
 }
 
@@ -198,14 +221,24 @@ export function isStellarAsset(asset: Asset): asset is StellarAsset {
  * Whether a symbol exists on both ends of a hop, which is the first thing a route planner needs to
  * know and the cheapest check it can do.
  */
-export function pairExists(from: ChainKey, to: ChainKey, symbol: string): boolean {
-  return assetOn(from, symbol) !== null && assetOn(to, symbol) !== null;
+export function pairExists(
+  from: ChainKey,
+  to: ChainKey,
+  symbol: string,
+  limits: CodecLimitOverrides = {},
+): boolean {
+  return assetOn(from, symbol, limits) !== null && assetOn(to, symbol, limits) !== null;
 }
 
 /** Every rail that can carry a symbol from one chain to another, in no particular order. */
-export function routesForPair(from: ChainKey, to: ChainKey, symbol: string): readonly RouteKind[] {
-  const source = assetOn(from, symbol);
-  const destination = assetOn(to, symbol);
+export function routesForPair(
+  from: ChainKey,
+  to: ChainKey,
+  symbol: string,
+  limits: CodecLimitOverrides = {},
+): readonly RouteKind[] {
+  const source = assetOn(from, symbol, limits);
+  const destination = assetOn(to, symbol, limits);
   if (source === null || destination === null) return [];
   return source.routes.filter((route) => destination.routes.includes(route));
 }

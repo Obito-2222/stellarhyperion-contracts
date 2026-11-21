@@ -17,6 +17,8 @@ import { isChainKey } from "./chains.js";
 import type { RouteKind } from "./routes.js";
 import { ROUTE_KINDS, ROUTE_SLUGS, tryRouteFromSlug } from "./routes.js";
 import { isStellarAddress } from "./addresses.js";
+import { assertWithinLimit, resolveCodecLimits } from "./limits.js";
+import type { CodecLimits, CodecLimitOverrides } from "./limits.js";
 
 /** The schema version of a deployment file, so an old file fails loudly rather than oddly. */
 export const DEPLOYMENT_SCHEMA_VERSION = 1;
@@ -215,8 +217,15 @@ function readEvmDeployment(
   raw: Record<string, unknown>,
   chain: ChainKey,
   path: string,
+  budgets: CodecLimits,
 ): EvmDeployment {
   const tokensRaw = asRecord(raw.tokens, `${path}.tokens`);
+  assertWithinLimit(
+    "maxDeploymentTokens",
+    Object.keys(tokensRaw).length,
+    budgets.maxDeploymentTokens,
+    `${path}.tokens`,
+  );
   const tokens: Record<string, EvmTokenDeployment> = {};
   for (const [symbol, entry] of Object.entries(tokensRaw)) {
     const tokenPath = `${path}.tokens.${symbol}`;
@@ -256,8 +265,15 @@ function readStellarDeployment(
   raw: Record<string, unknown>,
   chain: ChainKey,
   path: string,
+  budgets: CodecLimits,
 ): StellarDeployment {
   const tokensRaw = asRecord(raw.tokens, `${path}.tokens`);
+  assertWithinLimit(
+    "maxDeploymentTokens",
+    Object.keys(tokensRaw).length,
+    budgets.maxDeploymentTokens,
+    `${path}.tokens`,
+  );
   const tokens: Record<string, StellarTokenDeployment> = {};
   for (const [symbol, entry] of Object.entries(tokensRaw)) {
     const tokenPath = `${path}.tokens.${symbol}`;
@@ -311,7 +327,11 @@ function readStellarDeployment(
  * Takes `unknown` on purpose. The input is a parsed JSON file or an HTTP response body, and both
  * of those are somebody else's output no matter how much this repository wrote them.
  */
-export function parseDeploymentSet(value: unknown): DeploymentSet {
+export function parseDeploymentSet(
+  value: unknown,
+  limits: CodecLimitOverrides = {},
+): DeploymentSet {
+  const budgets = resolveCodecLimits(limits);
   const raw = asRecord(value, "$");
   const schemaVersion = asInteger(raw.schemaVersion, "$.schemaVersion", 1);
   if (schemaVersion !== DEPLOYMENT_SCHEMA_VERSION) {
@@ -322,6 +342,12 @@ export function parseDeploymentSet(value: unknown): DeploymentSet {
   }
 
   const networksRaw = asRecord(raw.networks, "$.networks");
+  assertWithinLimit(
+    "maxDeploymentNetworks",
+    Object.keys(networksRaw).length,
+    budgets.maxDeploymentNetworks,
+    "$.networks",
+  );
   const networks: Partial<Record<ChainKey, Deployment>> = {};
   for (const [key, entry] of Object.entries(networksRaw)) {
     const path = `$.networks.${key}`;
@@ -329,9 +355,9 @@ export function parseDeploymentSet(value: unknown): DeploymentSet {
     const record = asRecord(entry, path);
     const family = asString(record.family, `${path}.family`);
     if (family === "evm") {
-      networks[key] = readEvmDeployment(record, key, path);
+      networks[key] = readEvmDeployment(record, key, path, budgets);
     } else if (family === "stellar") {
-      networks[key] = readStellarDeployment(record, key, path);
+      networks[key] = readStellarDeployment(record, key, path, budgets);
     } else {
       fail(`${path}.family`, `expected "evm" or "stellar", found "${family}"`);
     }
@@ -342,6 +368,29 @@ export function parseDeploymentSet(value: unknown): DeploymentSet {
     generatedAt: asTimestamp(raw.generatedAt, "$.generatedAt"),
     networks,
   };
+}
+
+/**
+ * Parse a deployment document from JSON text, with the size budget checked first.
+ *
+ * The character count is measured before `JSON.parse`, which is the operation that would
+ * otherwise allocate in proportion to an arbitrarily large document. A malformed body is still a
+ * `DeploymentFormatError`, so callers have one error type to catch.
+ */
+export function parseDeploymentSetJson(
+  text: unknown,
+  limits: CodecLimitOverrides = {},
+): DeploymentSet {
+  const budgets = resolveCodecLimits(limits);
+  if (typeof text !== "string") fail("$", "expected a JSON string");
+  assertWithinLimit("maxDeploymentJsonChars", text.length, budgets.maxDeploymentJsonChars, "$");
+  let value: unknown;
+  try {
+    value = JSON.parse(text) as unknown;
+  } catch (error) {
+    fail("$", `expected JSON: ${error instanceof Error ? error.message : String(error)}`);
+  }
+  return parseDeploymentSet(value, budgets);
 }
 
 export function isEvmDeployment(deployment: Deployment): deployment is EvmDeployment {

@@ -1,3 +1,5 @@
+import { DEFAULT_CODEC_LIMITS, assertWithinLimit } from "./limits.js";
+
 /**
  * Byte handling, kept in one place so the codecs below read like the Solidity they mirror.
  *
@@ -17,12 +19,24 @@ export function toHex(bytes: Uint8Array): Hex {
   return `0x${out}`;
 }
 
-/** Hex back to bytes, with or without the prefix, refusing anything that is not even length. */
-export function fromHex(value: string): Uint8Array {
+/**
+ * Hex back to bytes, with or without the prefix, refusing anything that is not even length.
+ *
+ * The byte budget is checked before the output array is allocated, so a hex string that is far
+ * larger than any real message is refused for the cost of reading its length rather than for the
+ * cost of allocating it. `maxBytes` defaults to `DEFAULT_CODEC_LIMITS.maxHexBytes`; a provider
+ * extension with a genuinely larger message passes its own.
+ */
+export function fromHex(value: string, options: { readonly maxBytes?: number } = {}): Uint8Array {
   const body = value.startsWith("0x") || value.startsWith("0X") ? value.slice(2) : value;
   if (body.length % 2 !== 0) {
     throw new RangeError(`hex needs an even number of digits, got ${String(body.length)}`);
   }
+  const maxBytes = options.maxBytes ?? DEFAULT_CODEC_LIMITS.maxHexBytes;
+  if (!Number.isSafeInteger(maxBytes) || maxBytes <= 0) {
+    throw new RangeError(`maxBytes must be a positive safe integer, got ${String(maxBytes)}`);
+  }
+  assertWithinLimit("maxHexBytes", body.length / 2, maxBytes);
   const out = new Uint8Array(body.length / 2);
   for (let i = 0; i < out.length; i += 1) {
     const pair = body.slice(i * 2, i * 2 + 2);

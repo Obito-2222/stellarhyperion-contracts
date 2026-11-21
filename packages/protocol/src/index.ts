@@ -24,6 +24,9 @@
 // Bytes and hex, which everything else is built out of.
 export * from "./bytes.js";
 
+// Input budgets for the public codecs, so an oversized input fails before it costs anything.
+export * from "./limits.js";
+
 // The rails, and what is true about each one.
 export * from "./routes.js";
 

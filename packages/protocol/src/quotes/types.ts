@@ -1,5 +1,6 @@
 import type { RouteKind } from "../routes.js";
 import { RouteKind as RouteKindEnum } from "../routes.js";
+import type { CodecLimitOverrides } from "../limits.js";
 import type { RouterSnapshot, RouteQuote } from "../quotes.js";
 
 /**
@@ -29,6 +30,12 @@ export interface QuoteParams {
   readonly snapshot: RouterSnapshot;
   /** Optional custom destination gas estimates per rail, overriding historical defaults. */
   readonly gasEstimates?: Partial<Record<RouteKind, bigint>>;
+  /**
+   * Optional input budgets for this batch. The tier array and destination string are measured
+   * against them before anything proportional is allocated. Defaults are documented on
+   * `CodecLimits`.
+   */
+  readonly limits?: CodecLimitOverrides;
 }
 
 /**

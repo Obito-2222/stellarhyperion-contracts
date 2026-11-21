@@ -40,6 +40,32 @@ import { hyperionRouterAbi } from "@hyperion/protocol/abi";
 The ABIs sit behind `@hyperion/protocol/abi` so an app that only wants to format an amount does not
 pull forty kilobytes of JSON into its bundle to get it.
 
+## Public codec input budgets
+
+Every parser here reads something somebody else produced, so each public entry point that works in
+proportion to its input checks a budget first and refuses with `CodecLimitError` (a `RangeError`)
+before allocating. The defaults live in `limits.ts` and are exported as `DEFAULT_CODEC_LIMITS`: hex
+decoding is capped at 65,536 bytes per `fromHex` call, quote ladders at 64 tiers, destination strings at
+128 characters, deployment documents at 2,000,000 characters with 64 networks and 256 tokens each,
+and asset lookups at a 32 character symbol across 512 registry entries.
+
+Valid messages are unaffected: the budgets are far above any real note, CCTP message or deployment
+record, and `test/limits.test.ts` decodes the existing fixtures unchanged.
+
+A provider extension that genuinely carries more passes its own budget rather than editing a
+constant:
+
+```ts
+fromHex(payload, { maxBytes: 131_072 });
+quoteBatch(tiers, { ...params, limits: { maxQuoteTiers: 128 } });
+parseDeploymentSetJson(document, { maxDeploymentJsonChars: 4_000_000 });
+assetOn(chain, symbol, { maxAssetSymbolChars: 64 });
+```
+
+`resolveCodecLimits(overrides)` merges and freezes a set, and rejects zero, negative, fractional or
+non-finite values: a limit that silently became `NaN` would compare false against everything and
+remove the protection entirely.
+
 ## Three decisions worth knowing about
 
 **No runtime dependencies.** Everything works on `Uint8Array` and `bigint`. No `Buffer`, no viem at

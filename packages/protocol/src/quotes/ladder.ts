@@ -7,6 +7,7 @@ import {
 import { tryParseStellarAddress, AddressKind } from "../addresses.js";
 import type { RouteKind } from "../routes.js";
 import { ROUTE_KINDS, carriesPayload, isCanonical, waitsOnAttestation } from "../routes.js";
+import { assertWithinLimit, resolveCodecLimits } from "../limits.js";
 import { MAX_QUOTE_AMOUNT, QuoteBlocker, bestQuote } from "../quotes.js";
 import type { RouteQuote } from "../quotes.js";
 import {
@@ -40,6 +41,12 @@ export function quoteBatch(
   params: QuoteParams,
 ): readonly BatchQuoteResult[] {
   const { strkey, destinationDecimals, snapshot, gasEstimates } = params;
+
+  // Measure both variable sized inputs before allocating anything proportional. A ladder of a
+  // million tiers or a megabyte destination is refused at its size, not after mapping over it.
+  const budgets = resolveCodecLimits(params.limits);
+  assertWithinLimit("maxQuoteTiers", tiers.length, budgets.maxQuoteTiers, "tiers");
+  assertWithinLimit("maxStrkeyChars", strkey.length, budgets.maxStrkeyChars, "strkey");
 
   // Build combined gas projections from historical defaults and caller overrides
   const gasProjections: Record<RouteKind, bigint> = {

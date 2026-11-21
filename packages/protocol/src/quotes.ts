@@ -15,6 +15,8 @@ import { BPS_DENOMINATOR, MAX_DECIMALS, convertDecimals, floorToRepresentable } 
 import { tryParseStellarAddress, AddressKind } from "./addresses.js";
 import type { RouteKind } from "./routes.js";
 import { ROUTE_KINDS, carriesPayload, isCanonical, waitsOnAttestation } from "./routes.js";
+import { resolveCodecLimits } from "./limits.js";
+import type { CodecLimits, CodecLimitOverrides } from "./limits.js";
 
 /**
  * Why a rail turned a quote down. Same integers as the Solidity enum and the Soroban one, in
@@ -200,8 +202,24 @@ function blocked(base: RouteQuote, reason: QuoteBlocker): RouteQuote {
  * Price one rail. Never throws, for the same reason the on-chain version never reverts: an app
  * rendering four rows should not have to wrap each one in a try, and even the absurd amount
  * deserves a reason rather than a stack trace.
+ *
+ * An oversized destination string is an invalid destination, not an exception: this function's
+ * whole promise is that it answers. The length is measured before any base32 decoding, so the
+ * refusal costs nothing.
  */
-export function planQuote(request: QuoteRequest, snapshot: RouterSnapshot): RouteQuote {
+export function planQuote(
+  request: QuoteRequest,
+  snapshot: RouterSnapshot,
+  limits: CodecLimitOverrides = {},
+): RouteQuote {
+  return planQuoteWithin(request, snapshot, resolveCodecLimits(limits));
+}
+
+function planQuoteWithin(
+  request: QuoteRequest,
+  snapshot: RouterSnapshot,
+  limits: CodecLimits,
+): RouteQuote {
   const { route, amount, destinationDecimals } = request;
   const base: RouteQuote = {
     route,
@@ -227,6 +245,9 @@ export function planQuote(request: QuoteRequest, snapshot: RouterSnapshot): Rout
     return blocked(base, QuoteBlocker.MuxedNotSupported);
   }
   if (snapshot.chainSupported[route] !== true) return blocked(base, QuoteBlocker.ChainNotSupported);
+  if (request.strkey.length > limits.maxStrkeyChars) {
+    return blocked(base, QuoteBlocker.InvalidDestination);
+  }
 
   if (!snapshot.tokenRegistered) return blocked(base, QuoteBlocker.TokenNotRegistered);
   if (!snapshot.tokenEnabled) return blocked(base, QuoteBlocker.TokenDisabled);
@@ -264,8 +285,10 @@ export function planQuote(request: QuoteRequest, snapshot: RouterSnapshot): Rout
 export function planQuotes(
   request: Omit<QuoteRequest, "route">,
   snapshot: RouterSnapshot,
+  limits: CodecLimitOverrides = {},
 ): readonly RouteQuote[] {
-  return ROUTE_KINDS.map((route) => planQuote({ ...request, route }, snapshot));
+  const budgets = resolveCodecLimits(limits);
+  return ROUTE_KINDS.map((route) => planQuoteWithin({ ...request, route }, snapshot, budgets));
 }
 
 /**
@@ -340,8 +363,12 @@ export interface RouteQuoteV2 {
   readonly breakdownKnown: boolean;
 }
 
-export function planQuoteV2(request: QuoteRequest, snapshot: RouterSnapshot): RouteQuoteV2 {
-  const quote = planQuote(request, snapshot);
+export function planQuoteV2(
+  request: QuoteRequest,
+  snapshot: RouterSnapshot,
+  limits: CodecLimitOverrides = {},
+): RouteQuoteV2 {
+  const quote = planQuote(request, snapshot, limits);
   const base = {
     quote,
     requestedAmount: request.amount,
