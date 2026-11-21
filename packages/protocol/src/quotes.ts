@@ -33,6 +33,9 @@ export const QuoteBlocker = {
   MuxedNotSupported: 9,
   InvalidDestination: 10,
   ChainNotSupported: 11,
+  // Appended for the EVM circuit breaker. The integers above do not move.
+  CircuitBreakerTripped: 12,
+  CircuitBreakerThresholdExceeded: 13,
 } as const;
 
 export type QuoteBlocker = (typeof QuoteBlocker)[keyof typeof QuoteBlocker];
@@ -127,6 +130,20 @@ const COPY: Record<QuoteBlocker, BlockerCopy> = {
     detail: "This rail has no route to that chain, at least not one configured here.",
     owner: "rail",
     transient: false,
+  },
+  [QuoteBlocker.CircuitBreakerTripped]: {
+    label: "Asset departures stopped",
+    detail:
+      "An operator tripped this asset's emergency breaker. Arrivals and parked claims still settle, but nothing new leaves until a reviewed reset.",
+    owner: "operator",
+    transient: true,
+  },
+  [QuoteBlocker.CircuitBreakerThresholdExceeded]: {
+    label: "Above the emergency ceiling",
+    detail:
+      "This single transfer is above the asset's emergency per-departure ceiling. Send less, or wait for a reviewed threshold change.",
+    owner: "sender",
+    transient: true,
   },
 };
 

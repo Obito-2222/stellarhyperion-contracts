@@ -61,6 +61,25 @@ struct TokenConfig {
     bool enabled;
 }
 
+/// @dev Emergency limits for one asset, kept apart from the ordinary flow controls.
+///
+/// The flow limit answers "how much may cross in a window". A breaker answers "what is the most
+/// that may cross in a single departure, and is this asset departing at all". Keeping them in
+/// separate storage is what lets a guardian stop an asset immediately without waiting out a
+/// timelock, while every action that widens the emergency ceiling still does wait.
+struct TokenBreaker {
+    /// False until an admin has queued and executed a reviewed threshold.
+    bool configured;
+    /// When true, every new departure for this token is refused.
+    bool tripped;
+    /// Ceiling for one departure, in this chain's units for this asset.
+    uint256 threshold;
+    /// When the breaker was last tripped, for the audit trail.
+    uint64 trippedAt;
+    /// Who tripped it, for the audit trail.
+    address trippedBy;
+}
+
 /// @dev Notes on two structs that exist on the Stellar side and deliberately do not exist here.
 ///
 /// `TransferRecord` and `InboundRecord` are stored contract state in the Soroban router, because
@@ -138,7 +157,11 @@ enum ActionKind {
     /// while an incident is running. Retiring an asset for good is a different decision, it
     /// waits out the timelock like every other one, and it should say so plainly to anybody
     /// reading a failed quote.
-    SetTokenEnabled
+    SetTokenEnabled,
+    /// Set the emergency per-departure ceiling, bounded by the ordinary flow limit.
+    SetTokenBreakerThreshold,
+    /// Clear a tripped breaker. Admin only, and only after the timelock.
+    ResetTokenBreaker
 }
 
 /// @dev One administrative change, in a shape a reviewer can read as fast as the contract can.
@@ -219,7 +242,9 @@ enum QuoteBlocker {
     NotRepresentable,
     MuxedNotSupported,
     InvalidDestination,
-    ChainNotSupported
+    ChainNotSupported,
+    CircuitBreakerTripped,
+    CircuitBreakerThresholdExceeded
 }
 
 // Additive V2 result: the legacy RouteQuote tuple and its selectors remain unchanged.

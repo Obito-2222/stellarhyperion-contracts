@@ -64,6 +64,7 @@ contract Deploy is DeployConfig {
         console.log("fee bps             ", params.feeBps);
         console.log("timelock delay (s)  ", params.timelockDelay);
         console.log("flow window (s)     ", params.flowWindow);
+        console.log("breaker threshold   ", token.breakerThreshold);
         console.log("asset               ", token.token);
         console.log("wiring axelar       ", axelarToo);
 
@@ -121,6 +122,19 @@ contract Deploy is DeployConfig {
                 decimals: token.decimals
             }),
             string.concat("register ", token.symbol)
+        );
+
+        // After registration, because the router refuses a breaker threshold for a token it does
+        // not know. Before any route is enabled, so no departure can land between the two.
+        _queue(
+            AdminAction({
+                kind: ActionKind.SetTokenBreakerThreshold,
+                route: RouteKind.Cctp,
+                subject: token.token,
+                amount: token.breakerThreshold,
+                decimals: 0
+            }),
+            string.concat("set ", token.symbol, " breaker threshold")
         );
 
         _queue(_routeAction(ActionKind.SetAdapter, RouteKind.Cctp, address(cctp), 0), "set cctp adapter");
@@ -231,6 +245,7 @@ contract Deploy is DeployConfig {
         vm.serializeAddress(key, "token", token.token);
         vm.serializeUint(key, "tokenDecimals", token.decimals);
         vm.serializeUint(key, "tokenFlowLimit", token.flowLimit);
+        vm.serializeUint(key, "tokenBreakerThreshold", token.breakerThreshold);
 
         uint256[] memory ids = new uint256[](queued.length);
         string[] memory whats = new string[](queued.length);

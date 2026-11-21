@@ -54,6 +54,42 @@ for them. Existing request and quote schemas remain compatible. The active deplo
 Stellar Testnet outbound ITS/CCTP; new entrypoints require reviewed router/adapter upgrades,
 and these source changes do not activate additional deployments.
 
+## EVM emergency circuit breakers (development only)
+
+The EVM router now has a per-token emergency threshold that is deliberately separate from the
+ordinary sliding flow limit. It exists for the moment when a flow limit is the wrong instrument:
+the flow limit asks how much may cross in a window, and a breaker asks whether this asset should
+be departing at all.
+
+- `tripTokenBreaker(token)` stops new departures for one token immediately. The guardian or the
+  admin may call it, because it only ever narrows. Arrivals through `bridgeIn`, parked claims and
+  `settleClaim`/`settleClaims` are untouched: the money for those has already left somewhere else.
+- While armed, a single departure whose net crossing amount exceeds the reviewed threshold is
+  refused. The threshold is bounded by the token's ordinary flow limit and can never be zero.
+- `lowerTokenBreakerThreshold` is the guardian's immediate tightening tool. Raising the ceiling is
+  the `SetTokenBreakerThreshold` timelocked admin action, and it never clears a trip on its own.
+- `ResetTokenBreaker` is the only way to clear a trip. It is admin-only and waits out the timelock,
+  and it does not change the threshold, so a reset cannot silently restore exposure that the
+  guardian removed during the incident. `SetTokenBreakerThreshold` is re-validated at execution
+  time as well as at queue time, against the flow limit in force then.
+- `quote` reports `CircuitBreakerTripped` and `CircuitBreakerThresholdExceeded` as distinct
+  blockers, and `explainOutbound` returns the matching error selector, so an app can tell "send
+  less" from "this asset has stopped".
+
+Compatibility and migration: the two `QuoteBlocker` values are appended at the end of the enum, the
+three errors are appended after every existing declaration, and the two `ActionKind` values are
+appended. No existing selector, error name, enum integer or function signature moved, and the
+existing `tokenConfig` struct is unchanged; the breaker is read through `circuitBreaker(token)`. A
+router upgraded to this source starts with every breaker unconfigured, so the first
+`SetTokenBreakerThreshold` must queue, mature and execute like any other widening change. Records
+written before this change carry no `tokenBreakerThreshold` key and remain valid.
+
+This is development infrastructure. The active deployment remains Stellar Testnet outbound
+ITS/CCTP; no EVM breaker, entrypoint or migration is live until a separate reviewed activation with
+signed acceptance evidence. `evm/script/Deploy.s.sol` only queues the breaker threshold as part of
+a local or rehearsal deployment and defaults it to the ordinary flow limit unless
+`HYPERION_TOKEN_BREAKER_THRESHOLD` says otherwise.
+
 ## Organization overview
 
 The StellarHyperion organization divides cross-chain routing across three dedicated repositories:

@@ -126,6 +126,9 @@ export const EVM_ERROR_NAMES = [
   "RefundFailed",
   "ProviderBudgetExceeded",
   "AdapterMethodUnavailable",
+  "TokenCircuitBreakerTripped",
+  "CircuitBreakerThresholdExceeded",
+  "CircuitBreakerNotConfigured",
 ] as const;
 
 export type EvmErrorName = (typeof EVM_ERROR_NAMES)[number];
@@ -446,6 +449,23 @@ const HELP: Record<HyperionErrorName, Omit<ErrorHelp, "sorobanCode">> = {
   AdapterMethodUnavailable: {
     summary:
       "This adapter cannot validate the requested dispatch locally. Update the adapter or use a supported deployment.",
+    fault: "config",
+    retryable: false,
+  },
+  TokenCircuitBreakerTripped: {
+    summary:
+      "An operator has stopped new departures for this asset. Arrivals and parked claims already in flight still settle.",
+    fault: "timing",
+    retryable: true,
+  },
+  CircuitBreakerThresholdExceeded: {
+    summary:
+      "This single transfer is above the asset's emergency per-departure ceiling. Send less, or wait for a reviewed reset.",
+    fault: "limit",
+    retryable: true,
+  },
+  CircuitBreakerNotConfigured: {
+    summary: "This asset has no reviewed emergency ceiling yet, so its breaker cannot be tripped.",
     fault: "config",
     retryable: false,
   },

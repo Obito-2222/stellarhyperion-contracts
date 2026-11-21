@@ -160,6 +160,21 @@ contract Fixture is Test {
         _run(action);
     }
 
+    /// @dev The emergency breaker's threshold is a queued admin change, like every other
+    /// widening of what the router will do.
+    function _setBreakerThreshold(address token, uint256 threshold) internal {
+        AdminAction memory action = _empty(ActionKind.SetTokenBreakerThreshold);
+        action.subject = token;
+        action.amount = threshold;
+        _run(action);
+    }
+
+    function _resetBreaker(address token) internal {
+        AdminAction memory action = _empty(ActionKind.ResetTokenBreaker);
+        action.subject = token;
+        _run(action);
+    }
+
     function _setRouteFlowLimit(address token, RouteKind route, uint256 limit) internal {
         AdminAction memory action = _empty(ActionKind.SetRouteFlowLimit);
         action.route = route;

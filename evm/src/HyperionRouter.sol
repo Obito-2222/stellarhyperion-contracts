@@ -12,6 +12,8 @@ import {
     AdapterMethodUnavailable,
     AdapterNotSet,
     AmountNotRepresentable,
+    CircuitBreakerNotConfigured,
+    CircuitBreakerThresholdExceeded,
     ClaimAlreadySettled,
     ClaimNotFound,
     FeeTooHigh,
@@ -36,6 +38,7 @@ import {
     TimelockExpired,
     TimelockNotQueued,
     TimelockNotReady,
+    TokenCircuitBreakerTripped,
     TokenDisabled,
     TokenNotMapped,
     TokenNotRegistered,
@@ -61,6 +64,7 @@ import {
     RouteKind,
     RouteQuote,
     RouteQuoteV2,
+    TokenBreaker,
     TokenConfig
 } from "./HyperionTypes.sol";
 import {IHyperionRouter} from "./interfaces/IHyperionRouter.sol";
@@ -149,6 +153,9 @@ contract HyperionRouter is IHyperionRouter, AccessControl, Pausable, ReentrancyG
     /// @notice Whether an individual rail is currently paused for departures.
     mapping(RouteKind route => bool paused) public routePaused;
     mapping(address token => TokenConfig config) private _tokens;
+    /// @dev Keyed per token and deliberately separate from `_tokens`, so tripping one asset can
+    /// never disturb another asset's ordinary flow accounting or its registration.
+    mapping(address token => TokenBreaker breaker) private _breakers;
 
     /// @dev Keyed on token and rail together, because a ceiling that makes sense for the rail
     /// carrying native USDC makes no sense for the one carrying a pooled representation of it.
@@ -330,9 +337,18 @@ contract HyperionRouter is IHyperionRouter, AccessControl, Pausable, ReentrancyG
         if (!cfg.registered) revert TokenNotRegistered();
         if (!cfg.enabled) revert TokenDisabled();
 
+        // The breaker is checked before any arithmetic or money movement. A trip means this
+        // asset is not departing at all, and a per-departure ceiling is measured against what
+        // would actually cross, after the fee and the decimal floor.
+        TokenBreaker memory breaker = _breakers[request.token];
+        if (breaker.tripped) revert TokenCircuitBreakerTripped(request.token);
+
         (uint256 netRaw, uint256 fee) = AmountMath.applyFee(request.amount, feeBps);
         uint256 net = AmountMath.floorToRepresentable(netRaw, cfg.decimals, request.destinationDecimals);
         if (net == 0) revert AmountNotRepresentable();
+        if (breaker.configured && net > breaker.threshold) {
+            revert CircuitBreakerThresholdExceeded(net, breaker.threshold);
+        }
 
         uint256 landing = AmountMath.convertDecimalsExact(net, cfg.decimals, request.destinationDecimals);
         if (landing < request.minDestinationAmount) {
@@ -625,6 +641,12 @@ contract HyperionRouter is IHyperionRouter, AccessControl, Pausable, ReentrancyG
         if (!cfg.registered) return _blocked(q, QuoteBlocker.TokenNotRegistered);
         if (!cfg.enabled) return _blocked(q, QuoteBlocker.TokenDisabled);
 
+        // A trip is an operator decision, not a sender mistake, so it is reported before the
+        // amount is looked at. The ceiling below gets its own blocker: "send less" and "this
+        // asset has stopped" need different words on screen.
+        TokenBreaker memory breaker = _breakers[token];
+        if (breaker.tripped) return _blocked(q, QuoteBlocker.CircuitBreakerTripped);
+
         if (amount == 0) return _blocked(q, QuoteBlocker.AmountTooSmall);
 
         // Nothing past this is a transfer anybody is attempting, and the arithmetic below would
@@ -647,6 +669,7 @@ contract HyperionRouter is IHyperionRouter, AccessControl, Pausable, ReentrancyG
 
         uint256 net = AmountMath.floorToRepresentable(netRaw, cfg.decimals, destinationDecimals);
         if (net == 0) return _blocked(q, QuoteBlocker.NotRepresentable);
+        if (_breakerBreached(token, net)) return _blocked(q, QuoteBlocker.CircuitBreakerThresholdExceeded);
 
         uint256 headroom = flowAvailable(token, route);
         q.flowAvailable = headroom;
@@ -755,8 +778,45 @@ contract HyperionRouter is IHyperionRouter, AccessControl, Pausable, ReentrancyG
         if (!cfg.registered) revert TokenNotRegistered();
         if (limit >= cfg.flowLimit) revert LimitNotRaised();
         cfg.flowLimit = limit;
+        // Keep the emergency ceiling inside the ordinary one. The flow limit still applies on its
+        // own, but a breaker that permitted more than the flow limit would make the pending
+        // configuration read as looser than it is.
+        TokenBreaker storage breaker = _breakers[token];
+        if (breaker.configured && breaker.threshold > limit) {
+            breaker.threshold = limit;
+            emit CircuitBreakerThresholdChanged(token, msg.sender, limit);
+        }
         emit FlowLimitLowered(token, msg.sender, limit);
         emit TokenRegistered(token, cfg);
+    }
+
+    /// @inheritdoc IHyperionRouter
+    function circuitBreaker(address token) external view override returns (TokenBreaker memory) {
+        return _breakers[token];
+    }
+
+    /// @inheritdoc IHyperionRouter
+    /// @dev Immediate because it only ever narrows. Requires a reviewed threshold, so a token
+    /// cannot be frozen by a misconfigured default that was never approved.
+    function tripTokenBreaker(address token) external override {
+        _requireGuardianOrAdmin();
+        TokenBreaker storage breaker = _breakers[token];
+        if (!breaker.configured) revert CircuitBreakerNotConfigured();
+        if (breaker.tripped) revert InvalidLimit();
+        breaker.tripped = true;
+        breaker.trippedAt = uint64(block.timestamp);
+        breaker.trippedBy = msg.sender;
+        emit CircuitBreakerTripped(token, msg.sender, breaker.threshold);
+    }
+
+    /// @inheritdoc IHyperionRouter
+    function lowerTokenBreakerThreshold(address token, uint256 threshold) external override {
+        _requireGuardianOrAdmin();
+        TokenBreaker storage breaker = _breakers[token];
+        if (!breaker.configured) revert CircuitBreakerNotConfigured();
+        if (threshold == 0 || threshold >= breaker.threshold) revert InvalidLimit();
+        breaker.threshold = threshold;
+        emit CircuitBreakerThresholdChanged(token, msg.sender, threshold);
     }
 
     // -------------------------------------------------------------------------------------
@@ -908,6 +968,12 @@ contract HyperionRouter is IHyperionRouter, AccessControl, Pausable, ReentrancyG
     // Internals
     // -------------------------------------------------------------------------------------
 
+    /// @dev Whether one departure's crossing amount is over the reviewed emergency ceiling.
+    function _breakerBreached(address token, uint256 net) private view returns (bool) {
+        TokenBreaker memory breaker = _breakers[token];
+        return breaker.configured && net > breaker.threshold;
+    }
+
     function _flowKey(address token, RouteKind route) private pure returns (bytes32) {
         return keccak256(abi.encode(token, route));
     }
@@ -966,11 +1032,13 @@ contract HyperionRouter is IHyperionRouter, AccessControl, Pausable, ReentrancyG
             || kind == ActionKind.SetGuardian || kind == ActionKind.SetAdapter
             || kind == ActionKind.SetRailReceiver || kind == ActionKind.RegisterToken
             || kind == ActionKind.RaiseTokenFlowLimit || kind == ActionKind.SetRouteFlowLimit
-            || kind == ActionKind.SetTokenEnabled;
+            || kind == ActionKind.SetTokenEnabled || kind == ActionKind.SetTokenBreakerThreshold
+            || kind == ActionKind.ResetTokenBreaker;
         bool usesAmount = kind == ActionKind.SetFeeBps || kind == ActionKind.EnableRoute
             || kind == ActionKind.RegisterToken || kind == ActionKind.RaiseTokenFlowLimit
             || kind == ActionKind.SetRouteFlowLimit || kind == ActionKind.SetTimelockDelay
-            || kind == ActionKind.SetFlowWindow || kind == ActionKind.SetTokenEnabled;
+            || kind == ActionKind.SetFlowWindow || kind == ActionKind.SetTokenEnabled
+            || kind == ActionKind.SetTokenBreakerThreshold;
         bool usesDecimals = kind == ActionKind.RegisterToken;
 
         if (!usesRoute && action.route != RouteKind.Cctp) revert ActionFieldNotEmpty();
@@ -1003,6 +1071,9 @@ contract HyperionRouter is IHyperionRouter, AccessControl, Pausable, ReentrancyG
             if (!cfg.registered) revert TokenNotRegistered();
             if (action.amount <= cfg.flowLimit) revert LimitNotRaised();
         }
+        if (kind == ActionKind.SetTokenBreakerThreshold || kind == ActionKind.ResetTokenBreaker) {
+            _validateBreakerAction(kind, action);
+        }
         if (kind == ActionKind.SetTimelockDelay) {
             if (action.amount < MIN_TIMELOCK_DELAY || action.amount > MAX_TIMELOCK_DELAY) {
                 revert TimelockDelayOutOfRange();
@@ -1013,8 +1084,32 @@ contract HyperionRouter is IHyperionRouter, AccessControl, Pausable, ReentrancyG
         }
     }
 
+    /// @dev The breaker's own bounds, kept in one place so queue time and execution time measure
+    /// exactly the same things. `SetTokenBreakerThreshold` can never exceed the ordinary flow
+    /// limit, and `ResetTokenBreaker` cannot restore departures against a ceiling the guardian
+    /// has since tightened.
+    function _validateBreakerAction(ActionKind kind, AdminAction memory action) private view {
+        TokenConfig memory cfg = _tokens[action.subject];
+        if (!cfg.registered) revert TokenNotRegistered();
+        if (kind == ActionKind.SetTokenBreakerThreshold) {
+            // Never zero: a zero ceiling and an unconfigured breaker would otherwise be
+            // indistinguishable in storage.
+            if (action.amount == 0 || action.amount > cfg.flowLimit) revert InvalidLimit();
+            return;
+        }
+        TokenBreaker memory breaker = _breakers[action.subject];
+        if (!breaker.configured) revert CircuitBreakerNotConfigured();
+        if (!breaker.tripped) revert InvalidLimit();
+        if (breaker.threshold == 0 || breaker.threshold > cfg.flowLimit) revert InvalidLimit();
+    }
+
     function _applyAction(AdminAction memory action) private {
         ActionKind kind = action.kind;
+
+        if (kind == ActionKind.SetTokenBreakerThreshold || kind == ActionKind.ResetTokenBreaker) {
+            _applyBreakerAction(action);
+            return;
+        }
 
         if (kind == ActionKind.SetFeeBps) {
             feeBps = uint16(action.amount);
@@ -1064,5 +1159,22 @@ contract HyperionRouter is IHyperionRouter, AccessControl, Pausable, ReentrancyG
         }
 
         emit ConfigChanged(treasury, feeBps, timelockDelay, flowWindow);
+    }
+
+    function _applyBreakerAction(AdminAction memory action) private {
+        TokenBreaker storage breaker = _breakers[action.subject];
+        if (action.kind == ActionKind.SetTokenBreakerThreshold) {
+            // The trip state is deliberately preserved. Raising or lowering a reviewed ceiling is
+            // not the same decision as deciding an incident is over, and the latter has its own
+            // action so it cannot ride along unnoticed.
+            breaker.configured = true;
+            breaker.threshold = action.amount;
+            emit CircuitBreakerThresholdChanged(action.subject, msg.sender, action.amount);
+            return;
+        }
+        breaker.tripped = false;
+        breaker.trippedAt = 0;
+        breaker.trippedBy = address(0);
+        emit CircuitBreakerReset(action.subject, msg.sender, breaker.threshold);
     }
 }

@@ -50,6 +50,10 @@ abstract contract DeployConfig is Script {
         address token;
         uint8 decimals;
         uint256 flowLimit;
+        /// Emergency per-departure ceiling, kept strictly inside the ordinary flow limit. This is
+        /// development infrastructure: the active deployment is Stellar Testnet outbound
+        /// ITS/CCTP, and no EVM breaker is live until a separate reviewed activation.
+        uint256 breakerThreshold;
         string symbol;
     }
 
@@ -89,10 +93,19 @@ abstract contract DeployConfig is Script {
     /// router, which is a different operation with a different review, and pretending otherwise
     /// by looping here would hide that.
     function tokenParams() internal view returns (TokenParams memory params) {
+        uint256 flowLimit = vm.envUint("HYPERION_TOKEN_FLOW_LIMIT");
+        // Defaults to the flow limit, which keeps a fresh local router armed without inventing a
+        // second number nobody chose. A live deployment states its own, lower, ceiling.
+        uint256 breakerThreshold = vm.envOr("HYPERION_TOKEN_BREAKER_THRESHOLD", flowLimit);
+        require(
+            breakerThreshold > 0 && breakerThreshold <= flowLimit,
+            "HYPERION_TOKEN_BREAKER_THRESHOLD must be between 1 and HYPERION_TOKEN_FLOW_LIMIT"
+        );
         params = TokenParams({
             token: vm.envAddress("HYPERION_TOKEN"),
             decimals: uint8(vm.envUint("HYPERION_TOKEN_DECIMALS")),
-            flowLimit: vm.envUint("HYPERION_TOKEN_FLOW_LIMIT"),
+            flowLimit: flowLimit,
+            breakerThreshold: breakerThreshold,
             symbol: vm.envOr("HYPERION_TOKEN_SYMBOL", string("USDC"))
         });
     }

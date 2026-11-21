@@ -87,3 +87,17 @@ error ProviderBudgetExceeded();
 
 /// @notice The adapter lacks a usable local dispatch validation method.
 error AdapterMethodUnavailable();
+
+// Emergency circuit breakers, appended so no earlier selector moves.
+//
+// A breaker is deliberately not a flow limit. A flow limit is the ordinary operating ceiling that
+// decays across a window; a breaker is an operator's answer to something already going wrong, it
+// stops departures for one asset outright, and it cannot be reset without a reviewed change.
+/// @notice New departures for this token are stopped by its circuit breaker.
+error TokenCircuitBreakerTripped(address token);
+
+/// @notice One departure exceeds the token's emergency per-transfer threshold.
+error CircuitBreakerThresholdExceeded(uint256 amount, uint256 threshold);
+
+/// @notice The breaker has no reviewed threshold, so it cannot be tripped or reset.
+error CircuitBreakerNotConfigured();

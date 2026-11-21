@@ -15,6 +15,7 @@ import {
     RouteKind,
     RouteQuote,
     RouteQuoteV2,
+    TokenBreaker,
     TokenConfig
 } from "../HyperionTypes.sol";
 
@@ -158,6 +159,24 @@ interface IHyperionRouter {
     /// @param by Who moved it.
     /// @param limit The new ceiling, which is always lower than the old one.
     event FlowLimitLowered(address indexed token, address indexed by, uint256 limit);
+
+    /// @notice A token's emergency breaker stopped new departures.
+    /// @param token The token whose departures are now stopped.
+    /// @param by Who tripped it.
+    /// @param threshold The per-departure ceiling that was in force.
+    event CircuitBreakerTripped(address indexed token, address indexed by, uint256 threshold);
+
+    /// @notice A tripped breaker was cleared by a reviewed admin action.
+    /// @param token The token whose departures resume.
+    /// @param by Who executed the reset.
+    /// @param threshold The unchanged per-departure ceiling.
+    event CircuitBreakerReset(address indexed token, address indexed by, uint256 threshold);
+
+    /// @notice A token's emergency per-departure ceiling changed.
+    /// @param token The token whose ceiling moved.
+    /// @param by Who moved it.
+    /// @param threshold The new ceiling.
+    event CircuitBreakerThresholdChanged(address indexed token, address indexed by, uint256 threshold);
 
     /// @notice A token became routable, or its parameters changed.
     /// @param token The ERC20.
@@ -320,6 +339,24 @@ interface IHyperionRouter {
     /// @param token The token to tighten.
     /// @param limit The new ceiling, which has to be below the one in force.
     function lowerTokenFlowLimit(address token, uint256 limit) external;
+
+    /// @notice Read the emergency breaker for one token.
+    /// @param token The token to read.
+    /// @return The configured threshold and the current trip state.
+    function circuitBreaker(address token) external view returns (TokenBreaker memory);
+
+    /// @notice Stop new departures for one token immediately.
+    /// @dev Guardian or admin. Arrivals and fixed-recipient claims are unaffected, because the
+    /// money for those has already left somewhere else.
+    /// @param token The token to stop.
+    function tripTokenBreaker(address token) external;
+
+    /// @notice Tighten a token's emergency per-departure ceiling immediately.
+    /// @dev Guardian or admin, and it only ever narrows. Raising the ceiling, or clearing a trip,
+    /// is a queued admin action.
+    /// @param token The token to tighten.
+    /// @param threshold The new ceiling, which has to be below the one in force.
+    function lowerTokenBreakerThreshold(address token, uint256 threshold) external;
 
     /// @notice Pause departures for a single rail without affecting other rails.
     /// @param route The rail to pause.

@@ -62,6 +62,9 @@ export const GENERATED_EVM_ERROR_NAMES = [
   "RefundFailed",
   "ProviderBudgetExceeded",
   "AdapterMethodUnavailable",
+  "TokenCircuitBreakerTripped",
+  "CircuitBreakerThresholdExceeded",
+  "CircuitBreakerNotConfigured",
 ] as const;
 
 /** Four byte selector to error, for every error the compiled contracts can actually revert with. */
@@ -76,6 +79,7 @@ export const EVM_ERROR_SELECTORS = {
   "0x1e4fbdf7": { name: "OwnableInvalidOwner", signature: "OwnableInvalidOwner(address)" },
   "0x259ba1ad": { name: "TokenNotRegistered", signature: "TokenNotRegistered()" },
   "0x276f9a65": { name: "ZeroAddressKey", signature: "ZeroAddressKey()" },
+  "0x2a2282bd": { name: "CircuitBreakerThresholdExceeded", signature: "CircuitBreakerThresholdExceeded(uint256,uint256)" },
   "0x2c5211c6": { name: "InvalidAmount", signature: "InvalidAmount()" },
   "0x3305d9c0": { name: "ProviderBudgetExceeded", signature: "ProviderBudgetExceeded()" },
   "0x392334ed": { name: "InvalidWindow", signature: "InvalidWindow()" },
@@ -98,10 +102,12 @@ export const EVM_ERROR_SELECTORS = {
   "0x8dfc202b": { name: "ExpectedPause", signature: "ExpectedPause()" },
   "0x9289bf61": { name: "LimitNotRaised", signature: "LimitNotRaised()" },
   "0x9d7a7801": { name: "AmountNotRepresentable", signature: "AmountNotRepresentable()" },
+  "0x9e2c61fe": { name: "TokenCircuitBreakerTripped", signature: "TokenCircuitBreakerTripped(address)" },
   "0xa091855e": { name: "AdapterNotSet", signature: "AdapterNotSet()" },
   "0xa1d40c9a": { name: "DecimalOverflow", signature: "DecimalOverflow()" },
   "0xac6b05f5": { name: "InvalidDestination", signature: "InvalidDestination()" },
   "0xb3c237e0": { name: "UnexpectedRailContract", signature: "UnexpectedRailContract()" },
+  "0xb8f1e073": { name: "CircuitBreakerNotConfigured", signature: "CircuitBreakerNotConfigured()" },
   "0xcc3da7e0": { name: "TimelockDelayOutOfRange", signature: "TimelockDelayOutOfRange()" },
   "0xcd4e6167": { name: "FeeTooHigh", signature: "FeeTooHigh()" },
   "0xd25598a0": { name: "InvalidDecimals", signature: "InvalidDecimals()" },

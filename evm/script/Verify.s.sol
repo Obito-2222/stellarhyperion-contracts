@@ -5,7 +5,7 @@ import {stdJson} from "forge-std/StdJson.sol";
 import {console} from "forge-std/console.sol";
 
 import {HyperionRouter} from "../src/HyperionRouter.sol";
-import {RouteKind} from "../src/HyperionTypes.sol";
+import {RouteKind, TokenBreaker} from "../src/HyperionTypes.sol";
 import {AxelarItsAdapter} from "../src/adapters/AxelarItsAdapter.sol";
 import {CctpAdapter} from "../src/adapters/CctpAdapter.sol";
 
@@ -69,6 +69,18 @@ contract Verify is DeployConfig {
         _expectUint(
             "token flow limit", router.tokenConfig(token).flowLimit, record.readUint(".tokenFlowLimit")
         );
+
+        // A breaker is a reviewed, per-token emergency ceiling. Records written before the
+        // breaker existed carry no key, and that is a valid configuration (unconfigured), not a
+        // mismatch. When the key is present the chain has to agree with it exactly.
+        if (vm.keyExistsJson(record, ".tokenBreakerThreshold")) {
+            TokenBreaker memory breaker = router.circuitBreaker(token);
+            _expectTrue("token breaker configured", breaker.configured);
+            _expectUint(
+                "token breaker threshold", breaker.threshold, record.readUint(".tokenBreakerThreshold")
+            );
+            _expectFalse("token breaker tripped", breaker.tripped);
+        }
 
         _expectFalse("router paused", router.paused());
 
