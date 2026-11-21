@@ -31,6 +31,10 @@ contract AdapterOwnershipHandoverTest is Fixture {
         cctp.setLane(STELLAR, STELLAR_DOMAIN, C_KEY);
         axelar.setPeer(STELLAR, "stellar", bytes(C_ADDR));
         axelar.linkToken(address(usdc), TOKEN_ID);
+        axelar.setDestinationCapability(
+            STELLAR, address(usdc), 4, AxelarItsAdapter.DestinationCapability.GmpPayload
+        );
+        axelar.setDevelopmentGate(true, keccak256("independently validated ownership fixture"));
         vm.stopPrank();
         _setAdapter(RouteKind.Cctp, address(cctp));
         _setAdapter(RouteKind.AxelarIts, address(axelar));

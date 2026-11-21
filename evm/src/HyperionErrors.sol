@@ -101,3 +101,15 @@ error CircuitBreakerThresholdExceeded(uint256 amount, uint256 threshold);
 
 /// @notice The breaker has no reviewed threshold, so it cannot be tripped or reset.
 error CircuitBreakerNotConfigured();
+
+// Messenger rotation.
+error RotationAlreadyPending();
+error RotationNotPending();
+error RotationNotReady();
+error MessengerUnchanged();
+error OldMessengerExpired();
+/// @notice No outbound ITS transfer is registered for this top-up intent.
+error TopUpIntentNotFound();
+
+/// @notice A top-up changed an intent's bound message, destination, or refund recipient.
+error TopUpBindingMismatch();
