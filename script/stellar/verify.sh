@@ -152,6 +152,23 @@ say "Archived footprint planning: node script/stellar/restore-plan.mjs RPC_URL r
 say "TTL evidence is host RPC live/archived/unavailable, never a fabricated guest TTL."
 say "Replay journal export: node script/stellar/replay-journal.mjs RPC_URL ROUTER ledger:START or cursor:SAVED"
 
+# The backend and frontend each carry a copy of this record, and a copy that disagrees by one
+# character is the failure that parses fine and sends money to nobody. This step is opt in
+# because a checkout without the sibling repositories has nothing to compare, and read only: it
+# names the field and the owning repository and never writes their files.
+note "cross repository deployment copies"
+COPY_ARGS=()
+if [ -n "${HYPERION_BACKEND_COPY:-}" ]; then COPY_ARGS+=(--copy "backend=$HYPERION_BACKEND_COPY"); fi
+if [ -n "${HYPERION_FRONTEND_COPY:-}" ]; then COPY_ARGS+=(--copy "frontend=$HYPERION_FRONTEND_COPY"); fi
+if [ "${#COPY_ARGS[@]}" -gt 0 ]; then
+  if ! node "$CONTRACTS_ROOT/script/stellar/check-copies.mjs" --canonical "$RECORD" "${COPY_ARGS[@]}"; then
+    problems=$((problems + 1))
+  fi
+else
+  say "HYPERION_BACKEND_COPY and HYPERION_FRONTEND_COPY are not set, so there is nothing to compare."
+  say "Each takes owner=path or owner=repo@revision:path; the checker never rewrites them."
+fi
+
 printf '\n'
 if [ "$problems" -eq 0 ]; then
   printf '\033[32mEverything on chain matches the record.\033[0m\n'

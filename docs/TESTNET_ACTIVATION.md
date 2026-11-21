@@ -353,3 +353,39 @@ production pricing and funded broadcasts require separate operator evidence.
 The active deployment remains Stellar Testnet outbound ITS/CCTP. EVM and other
 rails remain gated until independently validated; these local fixtures do not
 activate them or publish a live deployment.
+
+### Cross repository deployment copy checks
+
+The backend and the frontend each carry a copy of the deployment data. A copy
+that differs by one character parses fine, so the failure is silent until an
+address that looks ordinary turns out to belong to nobody. The checker walks the
+canonical manifest and each consumer copy at an explicit revision, and names the
+exact field path together with the repository that owns it:
+
+```sh
+node script/stellar/check-copies.mjs \
+  --canonical deployments/testnet.json \
+  --copy backend=../stellarhyperion-backend@<rev>:deployments/testnet.json \
+  --copy frontend=../stellarhyperion-frontend@<rev>:src/deployment.json \
+  --archive deployments/archive/stellar-testnet-2026-10-01.json
+```
+
+A copy spec is either a local path (`owner=path`, reported as `working-tree`) or
+a pinned git object (`owner=/repo@REV:path/inside/repo`, read with `git show`).
+Only fields present in the canonical record are compared; a consumer's own
+commit, timestamps and local preferences are not mismatches. `routes` arrays are
+compared as sets because their order carries no wire meaning.
+
+Archived records are reported as archived and never compared as the active
+manifest. A record is archived when it carries `"archived": true` (or
+`"status": "archived"`), or when its path contains an `archive/` segment. Passing
+an archived record as a `--copy` is an error, and passing an unmarked record as
+`--archive` is an error, so a retired deployment cannot quietly become the copy
+an app ships.
+
+The command is read only. It opens files and prints git objects, and it has no
+write path at all: fixing a consumer copy is a separate reviewed change in that
+repository. `script/stellar/verify.sh` runs it when `HYPERION_BACKEND_COPY` and
+`HYPERION_FRONTEND_COPY` name the copies, and skips it with an explicit message
+otherwise. Exit status is 0 when every active copy agrees, 1 when any field
+disagrees, and 2 for a usage error.
