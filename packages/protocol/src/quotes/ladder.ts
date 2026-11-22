@@ -17,6 +17,7 @@ import {
 } from "../registry/assets.js";
 import type { ChainKey } from "../chains.js";
 import { boundedNumber, validatePlanningSnapshot } from "./validation.js";
+import { assertInputBudget, resolveInputBudgets, type InputBudgetOverrides } from "../limits.js";
 import {
   RAIL_DESTINATION_GAS_ESTIMATES,
   type BatchQuoteResult,
@@ -46,7 +47,9 @@ interface PrecomputedRailContext {
 export function quoteBatch(
   tiers: readonly bigint[],
   params: QuoteParams,
+  budgets?: InputBudgetOverrides,
 ): readonly BatchQuoteResult[] {
+  assertInputBudget(tiers.length, "maxQuoteTiers", "tiers", resolveInputBudgets(budgets));
   const { strkey, destinationDecimals, snapshot, gasEstimates } = params;
 
   // Resolve the requested asset identity once. An unknown identity or a rail the representation
@@ -202,7 +205,9 @@ export function quoteMinimumBatch(
   params: Omit<InverseQuoteRequest, "minimumDestinationAmount"> & {
     readonly snapshot: QuoteParams["snapshot"];
   },
+  budgets?: InputBudgetOverrides,
 ): readonly InverseQuotePlan[] {
+  assertInputBudget(minimums.length, "maxQuoteTiers", "minimums", resolveInputBudgets(budgets));
   return minimums.map((minimumDestinationAmount) =>
     planInverseQuote({ ...params, minimumDestinationAmount }, params.snapshot),
   );
@@ -229,7 +234,9 @@ export interface ProviderAwareBatchQuoteResult {
 export function quoteBatchWithProviderAddresses(
   tiers: readonly bigint[],
   params: ProviderAwareQuoteParams,
+  budgets?: InputBudgetOverrides,
 ): ProviderAwareBatchQuoteResult {
+  assertInputBudget(tiers.length, "maxQuoteTiers", "tiers", resolveInputBudgets(budgets));
   const providerAddresses: Partial<Record<RouteKind, ProviderAddressPair>> = {};
   for (const route of ROUTE_KINDS) {
     if (params.snapshot.chainSupported[route] !== true) continue;
@@ -242,7 +249,7 @@ export function quoteBatchWithProviderAddresses(
     );
   }
   return {
-    quotes: quoteBatch(tiers, params),
+    quotes: quoteBatch(tiers, params, budgets),
     providerAddresses: Object.freeze(providerAddresses),
   };
 }
@@ -266,7 +273,9 @@ export interface SharedFlowBatchResult {
 export function quoteBatchWithSharedFlow(
   tiers: readonly bigint[],
   params: QuoteParams,
+  budgets?: InputBudgetOverrides,
 ): SharedFlowBatchResult {
+  assertInputBudget(tiers.length, "maxQuoteTiers", "tiers", resolveInputBudgets(budgets));
   validatePlanningSnapshot(params.snapshot);
   boundedNumber(params.destinationDecimals, MAX_DECIMALS, "destinationDecimals");
   if (tiers.some((tier) => typeof tier !== "bigint"))

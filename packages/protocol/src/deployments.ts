@@ -25,6 +25,12 @@ import { RouteKind } from "./routes.js";
 import { ROUTE_KINDS, ROUTE_SLUGS, tryRouteFromSlug } from "./routes.js";
 import { isStellarAddress } from "./addresses.js";
 import type { ProviderAddressOverrides } from "./registry/assets.js";
+import {
+  assertInputBudget,
+  resolveInputBudgets,
+  type InputBudgetOverrides,
+  type InputBudgets,
+} from "./limits.js";
 
 /** The schema version of a deployment file, so an old file fails loudly rather than oddly. */
 export const DEPLOYMENT_SCHEMA_VERSION = 1;
@@ -254,8 +260,9 @@ function asTokenSymbol(value: unknown, path: string, key: string): string {
   return value === undefined ? key : asString(value, path);
 }
 
-function asRoutes(value: unknown, path: string): readonly RouteKind[] {
+function asRoutes(value: unknown, path: string, limits: InputBudgets): readonly RouteKind[] {
   if (!Array.isArray(value)) fail(path, "expected an array of rail slugs");
+  assertInputBudget(value.length, "maxDeploymentRoutes", path, limits);
   return value.map((entry, index) => {
     const slug = asString(entry, `${path}[${String(index)}]`);
     const route = tryRouteFromSlug(slug);
@@ -341,14 +348,16 @@ function readEvmDeployment(
   raw: Record<string, unknown>,
   chain: ChainKey,
   path: string,
+  limits: InputBudgets,
 ): EvmDeployment {
   const adapters = asAdapters(raw.adapters, `${path}.adapters`, asEvmAddress);
   const tokensRaw = asRecord(raw.tokens, `${path}.tokens`);
+  assertInputBudget(Object.keys(tokensRaw).length, "maxDeploymentTokens", `${path}.tokens`, limits);
   const tokens: Record<string, EvmTokenDeployment> = {};
   for (const [symbol, entry] of Object.entries(tokensRaw)) {
     const tokenPath = `${path}.tokens.${symbol}`;
     const token = asRecord(entry, tokenPath);
-    const routes = asRoutes(token.routes, `${tokenPath}.routes`);
+    const routes = asRoutes(token.routes, `${tokenPath}.routes`, limits);
     const providerAddresses =
       token.providerAddresses === undefined
         ? undefined
@@ -398,14 +407,16 @@ function readStellarDeployment(
   raw: Record<string, unknown>,
   chain: ChainKey,
   path: string,
+  limits: InputBudgets,
 ): StellarDeployment {
   const adapters = asAdapters(raw.adapters, `${path}.adapters`, asStellarContract);
   const tokensRaw = asRecord(raw.tokens, `${path}.tokens`);
+  assertInputBudget(Object.keys(tokensRaw).length, "maxDeploymentTokens", `${path}.tokens`, limits);
   const tokens: Record<string, StellarTokenDeployment> = {};
   for (const [symbol, entry] of Object.entries(tokensRaw)) {
     const tokenPath = `${path}.tokens.${symbol}`;
     const token = asRecord(entry, tokenPath);
-    const routes = asRoutes(token.routes, `${tokenPath}.routes`);
+    const routes = asRoutes(token.routes, `${tokenPath}.routes`, limits);
     const providerAddresses =
       token.providerAddresses === undefined
         ? undefined
@@ -430,6 +441,12 @@ function readStellarDeployment(
   }
 
   const hashesRaw = asRecord(raw.wasmHashes, `${path}.wasmHashes`);
+  assertInputBudget(
+    Object.keys(hashesRaw).length,
+    "maxDeploymentWasmHashes",
+    `${path}.wasmHashes`,
+    limits,
+  );
   const wasmHashes: Record<string, string> = {};
   for (const [name, entry] of Object.entries(hashesRaw)) {
     const hash = asString(entry, `${path}.wasmHashes.${name}`);
@@ -473,7 +490,8 @@ function readStellarDeployment(
  * not name itself, and must itself be active. A chain of archived records pointing at each other
  * is refused, because a warning that redirects to another retired router is no warning at all.
  */
-export function parseDeploymentSet(value: unknown): DeploymentSet {
+export function parseDeploymentSet(value: unknown, budgets?: InputBudgetOverrides): DeploymentSet {
+  const limits = resolveInputBudgets(budgets);
   const raw = asRecord(value, "$");
   const schemaVersion = asInteger(raw.schemaVersion, "$.schemaVersion", 1);
   if (schemaVersion !== DEPLOYMENT_SCHEMA_VERSION) {
@@ -484,6 +502,7 @@ export function parseDeploymentSet(value: unknown): DeploymentSet {
   }
   const generatedAt = asTimestamp(raw.generatedAt, "$.generatedAt");
   const networksRaw = asRecord(raw.networks, "$.networks");
+  assertInputBudget(Object.keys(networksRaw).length, "maxDeploymentNetworks", "$.networks", limits);
   const networks: Partial<Record<ChainKey, Deployment>> = {};
   for (const [key, entry] of Object.entries(networksRaw)) {
     if (!isChainKey(key)) fail(`$.networks.${key}`, "unknown chain key");
@@ -492,12 +511,12 @@ export function parseDeploymentSet(value: unknown): DeploymentSet {
     const family = record.family;
     if (family === "evm") {
       if (chain(key).family !== "evm") fail(`${path}.family`, "does not match the chain family");
-      networks[key] = readEvmDeployment(record, key, path);
+      networks[key] = readEvmDeployment(record, key, path, limits);
     } else if (family === "stellar") {
       if (chain(key).family !== "stellar") {
         fail(`${path}.family`, "does not match the chain family");
       }
-      networks[key] = readStellarDeployment(record, key, path);
+      networks[key] = readStellarDeployment(record, key, path, limits);
     } else {
       fail(`${path}.family`, 'expected "evm" or "stellar"');
     }

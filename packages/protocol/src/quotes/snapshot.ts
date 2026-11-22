@@ -18,6 +18,7 @@ import {
   flags,
   validatePlanningSnapshot,
 } from "./validation.js";
+import { assertInputBudget, resolveInputBudgets, type InputBudgetOverrides } from "../limits.js";
 
 export const QUOTE_SNAPSHOT_VERSION = 1 as const;
 export type QuoteSnapshotSource = "router-snapshot";
@@ -168,9 +169,17 @@ function tokenIdentity(input: unknown): AssetIdentity {
 }
 
 /** Parse unknown historical data before allowing its fields into typed local planning. */
-export function parseQuoteSnapshot(serialized: string): QuoteSnapshot {
-  if (typeof serialized !== "string" || serialized.length > 1_048_576)
-    throw new TypeError("quote snapshot exceeds its input limit");
+export function parseQuoteSnapshot(
+  serialized: string,
+  budgets?: InputBudgetOverrides,
+): QuoteSnapshot {
+  if (typeof serialized !== "string") throw new TypeError("quote snapshot must be a string");
+  assertInputBudget(
+    serialized.length,
+    "maxQuoteSnapshotChars",
+    "quote snapshot",
+    resolveInputBudgets(budgets),
+  );
   let raw: unknown;
   try {
     raw = JSON.parse(serialized);

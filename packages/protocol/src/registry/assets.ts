@@ -20,6 +20,7 @@ import {
   tryRouteFromSlug,
   type RouteKind as RouteKindType,
 } from "../routes.js";
+import { assertInputBudget, resolveInputBudgets, type InputBudgetOverrides } from "../limits.js";
 
 /**
  * How an asset is issued on the chain it lives on.
@@ -137,10 +138,15 @@ function providerAddress(value: unknown, path: string, chainKey: ChainKey): stri
  * This only records the addresses that a provider uses. It never writes to the declared asset
  * address, chain, or precision.
  */
-export function parseProviderAddressOverrides(value: unknown): ProviderAddressOverrides {
+export function parseProviderAddressOverrides(
+  value: unknown,
+  budgets?: InputBudgetOverrides,
+): ProviderAddressOverrides {
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
     throw new ProviderAddressError("$", "expected an object keyed by chain");
   }
+  const limits = resolveInputBudgets(budgets);
+  assertInputBudget(Object.keys(value).length, "maxProviderChains", "$", limits);
   const output: Partial<Record<ChainKey, Record<string, Partial<Record<RouteKindType, string>>>>> =
     {};
   for (const [chainName, chainValue] of Object.entries(value)) {
@@ -150,7 +156,9 @@ export function parseProviderAddressOverrides(value: unknown): ProviderAddressOv
       throw new ProviderAddressError(chainPath, "expected an object keyed by asset symbol");
     }
     const chainOverrides: Record<string, Partial<Record<RouteKindType, string>>> = {};
-    for (const [symbol, symbolValue] of Object.entries(chainValue as Record<string, unknown>)) {
+    const symbols = Object.entries(chainValue as Record<string, unknown>);
+    assertInputBudget(symbols.length, "maxProviderSymbols", chainPath, limits);
+    for (const [symbol, symbolValue] of symbols) {
       const symbolPath = `${chainPath}.${symbol}`;
       const asset = assetOn(chainName, symbol);
       if (asset === null) throw new ProviderAddressError(symbolPath, "unknown asset on chain");

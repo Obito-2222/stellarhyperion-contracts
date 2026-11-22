@@ -198,6 +198,61 @@ reference data for those rails and are not evidence that a route is live. Identi
 does not change that gate: a resolved asset says what token a rail would use, not that the rail is
 enabled on chain.
 
+## Input budgets for external data
+
+Every parser here reads something it did not produce: a rail payload, a persisted quote snapshot, a
+deployment file, a provider override document, an amount ladder from an input field. Each one
+checks an explicit size **before** decoding, slicing or expanding, so an oversized input costs a
+length comparison instead of an allocation proportional to it. Past a budget the call throws
+`InputBudgetError` naming the field, the budget and the observed size; a malformed input that is
+within budget still fails with the format error it always did.
+
+| Budget                    | Default | Applies to                                                                                                                                          |
+| ------------------------- | ------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `maxMessageBytes`         | 4096    | `decodeOutboundNote`, `decodeInboundNote`, `decodeCctpHook`, `toEvmAddress`, `parseCctpMessage`, `cctpBody`, `parseCctpBurnMessage`, `cctpHookData` |
+| `maxQuoteTiers`           | 256     | `quoteBatch`, `quoteMinimumBatch`, `quoteBatchWithSharedFlow`, `quoteBatchWithProviderAddresses`                                                    |
+| `maxSnapshots`            | 256     | `compareSnapshots`                                                                                                                                  |
+| `maxQuoteSnapshotChars`   | 1048576 | `parseQuoteSnapshot`                                                                                                                                |
+| `maxDeploymentNetworks`   | 32      | `parseDeploymentSet`                                                                                                                                |
+| `maxDeploymentTokens`     | 256     | `parseDeploymentSet`, per deployment                                                                                                                |
+| `maxDeploymentRoutes`     | 16      | `parseDeploymentSet`, per token record                                                                                                              |
+| `maxDeploymentWasmHashes` | 64      | `parseDeploymentSet`, Stellar records                                                                                                               |
+| `maxProviderChains`       | 32      | `parseProviderAddressOverrides`                                                                                                                     |
+| `maxProviderSymbols`      | 128     | `parseProviderAddressOverrides`, per chain                                                                                                          |
+
+The defaults come from the wire formats, not from what felt generous: a note is 29 bytes, a CCTP
+hook 34 or 42, a word 32, so `maxMessageBytes` is orders of magnitude above any Hyperion message
+while still refusing a multi-megabyte string cheaply. `INPUT_BUDGETS` is frozen, and every bounded
+function takes overrides as its final argument, so a provider that genuinely carries larger
+payloads states that once at the call site:
+
+```ts
+import { INPUT_BUDGETS, InputBudgetError, decodeInboundNote } from "@hyperion/protocol";
+
+decodeInboundNote(payload); // published ceilings
+
+try {
+  decodeInboundNote(payload, { maxMessageBytes: 16_384 }); // explicit provider extension
+} catch (error) {
+  if (error instanceof InputBudgetError) {
+    console.error(error.path, error.budget, error.actual, error.limit);
+  }
+}
+```
+
+`resolveInputBudgets` merges an override over `INPUT_BUDGETS` and refuses unknown budget names and
+non-positive ceilings, so a typo fails instead of silently leaving the default in place. The
+budgets are per call: nothing here is global mutable state, and two components in one process can
+hold different ceilings.
+
+Compatibility: no accepted message, snapshot, deployment record or override document changes
+shape, and every existing fixture decodes identically. The only inputs that newly fail are ones
+larger than the published ceilings, which are already far past anything the contracts emit; a
+consumer that was passing something bigger was doing so against a limit that used to be implied by
+whatever its runtime could allocate. Raising a budget is a local decision and does not change the
+wire format. The active deployment remains Stellar Testnet outbound ITS/CCTP, and nothing here
+ungates EVM or any other rail.
+
 ## Three decisions worth knowing about
 
 **No runtime dependencies.** Everything works on `Uint8Array` and `bigint`. No `Buffer`, no viem at

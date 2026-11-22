@@ -1,5 +1,6 @@
 import { chain, isChainKey } from "../chains.js";
 import { tryParseStellarAddress } from "../addresses.js";
+import { assertInputBudget, resolveInputBudgets, type InputBudgetOverrides } from "../limits.js";
 import { MAX_DECIMALS, MAX_FEE_BPS } from "../amounts.js";
 import { ROUTE_KINDS, type RouteKind } from "../routes.js";
 import {
@@ -149,7 +150,9 @@ export function compareSnapshots(
   snapshots: readonly DatedSnapshot[],
   reference: SnapshotReference,
   maxAgeSeconds: number,
+  budgets?: InputBudgetOverrides,
 ): readonly SnapshotComparison[] {
+  assertInputBudget(snapshots.length, "maxSnapshots", "snapshots", resolveInputBudgets(budgets));
   if (!timestamp(reference.now) || !timestamp(maxAgeSeconds)) {
     throw new RangeError("now and maxAgeSeconds must be non-negative safe integer seconds");
   }

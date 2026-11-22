@@ -12,6 +12,7 @@
 import { bytesToBigInt, fromHex, toHex } from "./bytes.js";
 import type { Hex } from "./bytes.js";
 import { fail } from "./errors.js";
+import { assertMessageBudget, resolveInputBudgets, type InputBudgetOverrides } from "./limits.js";
 
 /** Circle's domain number for Stellar. */
 export const STELLAR_DOMAIN = 27;
@@ -183,7 +184,11 @@ export interface CctpBurnMessage {
 }
 
 /** Parse a header, refusing anything too short to hold one. */
-export function parseCctpMessage(raw: Uint8Array | Hex): CctpMessage {
+export function parseCctpMessage(
+  raw: Uint8Array | Hex,
+  budgets?: InputBudgetOverrides,
+): CctpMessage {
+  assertMessageBudget(raw, "cctp message", resolveInputBudgets(budgets));
   const bytes = typeof raw === "string" ? fromHex(raw) : raw;
   if (bytes.length < MSG_BODY) fail("MalformedMessage", "too short for a CCTP header");
   return {
@@ -200,13 +205,18 @@ export function parseCctpMessage(raw: Uint8Array | Hex): CctpMessage {
 }
 
 /** The body Circle hands to whichever handler the recipient names. */
-export function cctpBody(raw: Uint8Array | Hex): Uint8Array {
+export function cctpBody(raw: Uint8Array | Hex, budgets?: InputBudgetOverrides): Uint8Array {
+  assertMessageBudget(raw, "cctp message", resolveInputBudgets(budgets));
   const bytes = typeof raw === "string" ? fromHex(raw) : raw;
   if (bytes.length < MSG_BODY) fail("MalformedMessage", "too short for a CCTP header");
   return bytes.slice(MSG_BODY);
 }
 
-export function parseCctpBurnMessage(body: Uint8Array | Hex): CctpBurnMessage {
+export function parseCctpBurnMessage(
+  body: Uint8Array | Hex,
+  budgets?: InputBudgetOverrides,
+): CctpBurnMessage {
+  assertMessageBudget(body, "burn message", resolveInputBudgets(budgets));
   const bytes = typeof body === "string" ? fromHex(body) : body;
   if (bytes.length < BURN_HOOK_DATA) fail("MalformedMessage", "too short for a burn message");
   return {
@@ -222,7 +232,8 @@ export function parseCctpBurnMessage(body: Uint8Array | Hex): CctpBurnMessage {
 }
 
 /** The trailing hook payload, empty when the sender attached none. */
-export function cctpHookData(body: Uint8Array | Hex): Uint8Array {
+export function cctpHookData(body: Uint8Array | Hex, budgets?: InputBudgetOverrides): Uint8Array {
+  assertMessageBudget(body, "burn message", resolveInputBudgets(budgets));
   const bytes = typeof body === "string" ? fromHex(body) : body;
   if (bytes.length < BURN_HOOK_DATA) fail("MalformedMessage", "too short for a burn message");
   return bytes.slice(BURN_HOOK_DATA);

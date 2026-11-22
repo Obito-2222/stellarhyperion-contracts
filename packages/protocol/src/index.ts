@@ -24,6 +24,9 @@
 // Bytes and hex, which everything else is built out of.
 export * from "./bytes.js";
 
+// Explicit size budgets every external-input parser enforces before allocating.
+export * from "./limits.js";
+
 // The rails, and what is true about each one.
 export * from "./routes.js";
 

@@ -24,6 +24,7 @@ import {
 import { bytesToAscii, bytesToBigInt, concatBytes, fromHex, toHex } from "./bytes.js";
 import type { Hex } from "./bytes.js";
 import { fail } from "./errors.js";
+import { assertMessageBudget, resolveInputBudgets, type InputBudgetOverrides } from "./limits.js";
 
 /** One envelope version across both rails, so nobody has to remember which rail numbers what. */
 export const NOTE_VERSION_V1 = 1;
@@ -91,7 +92,11 @@ export interface InboundNote {
  * else built, and reading the first twenty nine bytes of it anyway is how a parser becomes an
  * attack surface.
  */
-export function decodeOutboundNote(payload: Uint8Array | Hex): OutboundNote {
+export function decodeOutboundNote(
+  payload: Uint8Array | Hex,
+  budgets?: InputBudgetOverrides,
+): OutboundNote {
+  assertMessageBudget(payload, "note", resolveInputBudgets(budgets));
   const bytes = typeof payload === "string" ? fromHex(payload) : payload;
   const version = bytes[0];
   if (version === undefined) fail("MalformedMessage", "missing note version");
@@ -134,7 +139,11 @@ export function encodeInboundNote(strkey: string, nonce: bigint): Uint8Array {
 }
 
 /** Read an inbound note back, which is what the Stellar side does with it. */
-export function decodeInboundNote(payload: Uint8Array | Hex): InboundNote {
+export function decodeInboundNote(
+  payload: Uint8Array | Hex,
+  budgets?: InputBudgetOverrides,
+): InboundNote {
+  assertMessageBudget(payload, "note", resolveInputBudgets(budgets));
   const bytes = typeof payload === "string" ? fromHex(payload) : payload;
   const version = bytes[0];
   if (version === undefined) fail("MalformedMessage", "missing note version");
@@ -182,11 +191,15 @@ export function encodeCctpHook(strkey: string): Uint8Array {
 }
 
 /** Read a CCTP hook back into the destination it names. */
-export function decodeCctpHook(payload: Uint8Array | Hex): {
+export function decodeCctpHook(
+  payload: Uint8Array | Hex,
+  budgets?: InputBudgetOverrides,
+): {
   kind: AddressKind;
   key: Hex;
   muxedId: bigint;
 } {
+  assertMessageBudget(payload, "hook", resolveInputBudgets(budgets));
   const bytes = typeof payload === "string" ? fromHex(payload) : payload;
   if (bytes.length !== 34 && bytes.length !== 42) {
     fail(
@@ -235,7 +248,8 @@ export function encodeAxelarMetadata(note: Uint8Array): Uint8Array {
  * produces an address that looks completely ordinary and belongs to nobody, and that is the failure
  * this exists to prevent rather than tidy up after.
  */
-export function toEvmAddress(word: Hex | Uint8Array): Hex {
+export function toEvmAddress(word: Hex | Uint8Array, budgets?: InputBudgetOverrides): Hex {
+  assertMessageBudget(word, "word", resolveInputBudgets(budgets));
   const bytes = typeof word === "string" ? fromHex(word) : word;
   if (bytes.length !== 32) fail("MalformedMessage", "a word is thirty two bytes");
   if (bytesToBigInt(bytes.slice(0, 12)) !== 0n) fail("NotEvmAddress");
